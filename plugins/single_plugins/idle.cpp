@@ -115,6 +115,8 @@ class wayfire_idle_singleton : public wf::singleton_plugin_t<wayfire_idle>
     wf::option_wrapper_t<int> zoom_speed{"idle/cube_zoom_speed"};
     screensaver_animation_t screensaver_animation{zoom_speed};
     wf::option_wrapper_t<int> screensaver_timeout{"idle/screensaver_timeout"};
+    wf::option_wrapper_t<int> suspend_timeout{"idle/suspend_timeout"};
+    wf::option_wrapper_t<std::string> suspend_command{"idle/suspend_command"};
     wf::option_wrapper_t<double> cube_rotate_speed{"idle/cube_rotate_speed"};
     wf::option_wrapper_t<double> cube_max_zoom{"idle/cube_max_zoom"};
     wf::option_wrapper_t<bool> disable_on_fullscreen{"idle/disable_on_fullscreen"};
@@ -128,6 +130,8 @@ class wayfire_idle_singleton : public wf::singleton_plugin_t<wayfire_idle>
     uint32_t last_time;
     wlr_idle_timeout *timeout_screensaver = NULL;
     wf::wl_listener_wrapper on_idle_screensaver, on_resume_screensaver;
+    wlr_idle_timeout *timeout_suspend = NULL;
+    wf::wl_listener_wrapper on_idle_suspend, on_resume_suspend;
 
     wf::activator_callback toggle = [=] (auto)
     {
@@ -138,9 +142,11 @@ class wayfire_idle_singleton : public wf::singleton_plugin_t<wayfire_idle>
 
         if (get_instance().hotkey_inhibitor.has_value())
         {
+            wf::get_core().run("notify-send wayfire 'auto idle on'");
             get_instance().hotkey_inhibitor.reset();
         } else
         {
+            wf::get_core().run("notify-send wayfire 'auto idle off'");
             get_instance().hotkey_inhibitor.emplace();
         }
 
@@ -201,6 +207,12 @@ class wayfire_idle_singleton : public wf::singleton_plugin_t<wayfire_idle>
             create_screensaver_timeout(screensaver_timeout);
         });
         create_screensaver_timeout(screensaver_timeout);
+
+        suspend_timeout.set_callback([=] ()
+        {
+            create_suspend_timeout(suspend_timeout);
+        });
+        create_suspend_timeout(suspend_timeout);
     }
 
     void destroy_screensaver_timeout()
@@ -404,6 +416,47 @@ class wayfire_idle_singleton : public wf::singleton_plugin_t<wayfire_idle>
         destroy_screensaver_timeout();
         output->rem_binding(&toggle);
         singleton_plugin_t::fini();
+    }
+
+    void destroy_suspend_timeout()
+    {
+        if (timeout_suspend)
+        {
+            on_idle_suspend.disconnect();
+            on_resume_suspend.disconnect();
+            wlr_idle_timeout_destroy(timeout_suspend);
+        }
+
+        timeout_suspend = NULL;
+    }
+
+    void create_suspend_timeout(int timeout_sec)
+    {
+        destroy_suspend_timeout();
+        if (timeout_sec <= 0)
+        {
+            return;
+        }
+
+        timeout_suspend = wlr_idle_timeout_create(wf::get_core().protocols.idle,
+            wf::get_core().get_current_seat(), 1000 * timeout_sec);
+        on_idle_suspend.set_callback([&] (void*)
+        {
+            start_suspend();
+        });
+        on_idle_suspend.connect(&timeout_suspend->events.idle);
+
+        on_resume_suspend.set_callback([&] (void*)
+        {
+            return;
+        });
+        on_resume_suspend.connect(&timeout_suspend->events.resume);
+    }
+
+    void start_suspend()
+    {
+      std::string command = suspend_command;
+      wf::get_core().run(command);
     }
 };
 
