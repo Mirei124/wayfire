@@ -34,18 +34,19 @@ class screensaver_animation_t : public duration_t
 
 class wayfire_idle
 {
-    wf::option_wrapper_t<int> dpms_timeout{"idle/dpms_timeout"};
     wf::wl_listener_wrapper on_idle_dpms, on_resume_dpms;
     wlr_idle_timeout *timeout_dpms = NULL;
 
   public:
-    std::optional<wf::idle_inhibitor_t> hotkey_inhibitor;
+    wf::option_wrapper_t<int> dpms_timeout{"idle/dpms_timeout"};
+    bool hotkey_inhibitor = false;
 
     wayfire_idle()
     {
         dpms_timeout.set_callback([=] ()
         {
             create_dpms_timeout(dpms_timeout);
+            hotkey_inhibitor = false;
         });
         create_dpms_timeout(dpms_timeout);
     }
@@ -140,14 +141,20 @@ class wayfire_idle_singleton : public wf::singleton_plugin_t<wayfire_idle>
             return false;
         }
 
-        if (get_instance().hotkey_inhibitor.has_value())
+        if (get_instance().hotkey_inhibitor)
         {
             wf::get_core().run("notify-send wayfire 'auto idle on'");
-            get_instance().hotkey_inhibitor.reset();
+            create_screensaver_timeout(screensaver_timeout);
+            create_suspend_timeout(suspend_timeout);
+            get_instance().create_dpms_timeout(get_instance().dpms_timeout);
+            get_instance().hotkey_inhibitor = false;
         } else
         {
             wf::get_core().run("notify-send wayfire 'auto idle off'");
-            get_instance().hotkey_inhibitor.emplace();
+            destroy_screensaver_timeout();
+            destroy_suspend_timeout();
+            get_instance().destroy_dpms_timeout();
+            get_instance().hotkey_inhibitor = true;
         }
 
         return true;
@@ -205,12 +212,14 @@ class wayfire_idle_singleton : public wf::singleton_plugin_t<wayfire_idle>
         screensaver_timeout.set_callback([=] ()
         {
             create_screensaver_timeout(screensaver_timeout);
+            get_instance().hotkey_inhibitor = false;
         });
         create_screensaver_timeout(screensaver_timeout);
 
         suspend_timeout.set_callback([=] ()
         {
             create_suspend_timeout(suspend_timeout);
+            get_instance().hotkey_inhibitor = false;
         });
         create_suspend_timeout(suspend_timeout);
     }
